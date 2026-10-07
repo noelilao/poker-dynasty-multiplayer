@@ -1,8 +1,8 @@
 /* Poker Dynasty V84.0H — Deno Deploy / Deno KV adapter.
  * Preserves the existing room and Career reducers; only persistence/HTTP hosting changes.
  */
-import { handle } from './mp-engine/rooms.mjs';
-import { handleCareer } from './mp-engine/career84.mjs';
+import { handle } from './rooms.mjs';
+import { handleCareer } from './career84.mjs';
 
 const CORS={
  'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET, POST, OPTIONS',

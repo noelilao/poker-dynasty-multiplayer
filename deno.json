@@ -1,0 +1,4 @@
+{
+  "tasks": {"start": "deno run --allow-net --allow-env --unstable-kv main.ts"},
+  "compilerOptions": {"allowJs": true, "checkJs": false}
+}

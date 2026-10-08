@@ -62,7 +62,7 @@ const ENTRY_PREFIX='pd84e-entry|';
  * Stay comfortably below the Deno KV per-value ceiling.
  * Both native snapshots and shared Career worlds use this size.
  */
-const CHUNK=48_000;
+const CHUNK=8_000;
 
 async function snapshotGet(ref:string){
  const m=await kv.get<any>(snapMeta(ref));

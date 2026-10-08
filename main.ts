@@ -1,6 +1,7 @@
-/* Poker Dynasty V84.0H — Deno Deploy / Deno KV adapter.
- * Deno KV shared-Career persistence fix:
- * large Career worlds are stored in chunks while preserving revision CAS.
+
+/* Poker Dynasty V88 — Deno Deploy / Deno KV adapter.
+ * UTF-8-safe Career snapshot and world chunking.
+ * Existing storage keys and revision CAS are preserved.
  */
 import { handle } from './rooms.mjs';
 import { handleCareer } from './career84.mjs';
@@ -42,7 +43,6 @@ const roomKey=(code:string)=>
 const worldKey=(code:string)=>
  ['world',String(code).toUpperCase()] as Deno.KvKey;
 
-/* New chunked Career-world storage. */
 const worldMetaKey=(code:string)=>
  ['world2',String(code).toUpperCase(),'meta'] as Deno.KvKey;
 
@@ -58,10 +58,33 @@ const snapChunk=(ref:string,n:number)=>
 const ENTRY_PREFIX='pd84e-entry|';
 
 /*
- * Stay comfortably below the Deno KV per-value ceiling.
- * Both native snapshots and shared Career worlds use this size.
+ * Keep encoded UTF-8 chunks below the Deno KV value limit.
+ * Never split a Unicode code point.
  */
 const CHUNK=48_000;
+
+function chunksOf(value:string):string[]{
+ const parts:string[]=[];
+ let start=0, index=0, bytes=0;
+
+ for(const cp of value){
+  const size=te.encode(cp).length;
+
+  if(bytes+size>CHUNK&&index>start){
+   parts.push(value.slice(start,index));
+   start=index;
+   bytes=0;
+  }
+
+  bytes+=size;
+  index+=cp.length;
+ }
+
+ if(index>start)
+  parts.push(value.slice(start,index));
+
+ return parts;
+}
 
 async function snapshotGet(ref:string){
  const m=await kv.get<any>(snapMeta(ref));
@@ -91,15 +114,8 @@ async function snapshotPut(ref:string,text:string){
   return;
  }
 
- const parts:string[]=[];
+ const parts=chunksOf(text);
 
- for(let i=0;i<text.length;i+=CHUNK)
-  parts.push(text.slice(i,i+CHUNK));
-
- /*
-  * Chunks are immutable.
-  * Metadata is written last, so incomplete writes remain invisible.
-  */
  for(let i=0;i<parts.length;i++){
   const key=snapChunk(ref,i);
   const cur=await kv.get<string>(key);
@@ -135,11 +151,7 @@ async function snapshotPut(ref:string,text:string){
 }
 
 /*
- * Load a shared Career world.
- *
- * First try the new chunked representation.
- * If it does not exist, fall back to the original V84 Deno KV
- * single-value record. This is what preserves existing worlds.
+ * Preserve existing V84 worlds and chunked-world compatibility.
  */
 async function careerLoad(code:string){
  code=String(code).toUpperCase();
@@ -166,9 +178,6 @@ async function careerLoad(code:string){
  return (await kv.get<any>(worldKey(code))).value??null;
 }
 
-/*
- * New worlds are immediately created using chunked storage.
- */
 async function careerCreate(w:any){
  const code=String(w.worldCode).toUpperCase();
 
@@ -179,20 +188,13 @@ async function careerCreate(w:any){
   return false;
 
  const raw=JSON.stringify(w);
- const parts:string[]=[];
-
- for(let i=0;i<raw.length;i+=CHUNK)
-  parts.push(raw.slice(i,i+CHUNK));
+ const parts=chunksOf(raw);
 
  const ttl=Math.max(
   60_000,
   w.expiresAt-Date.now()
  );
 
- /*
-  * Write immutable revision chunks first.
-  * They are not authoritative until metadata is committed.
-  */
  for(let i=0;i<parts.length;i++){
   await kv.set(
    worldChunkKey(code,w.revision,i),
@@ -201,9 +203,6 @@ async function careerCreate(w:any){
   );
  }
 
- /*
-  * The metadata record is the authoritative pointer.
-  */
  return (
   await kv.atomic()
    .check(meta)
@@ -220,15 +219,6 @@ async function careerCreate(w:any){
  ).ok;
 }
 
-/*
- * Revision-safe Career update.
- *
- * Existing single-value worlds migrate automatically on their
- * first successful update.
- *
- * The old world record is deleted only in the same atomic commit
- * that publishes the new chunked revision.
- */
 async function careerCas(w:any,rev:number){
  const code=String(w.worldCode).toUpperCase();
 
@@ -243,19 +233,13 @@ async function careerCas(w:any,rev:number){
   return false;
 
  const raw=JSON.stringify(w);
- const parts:string[]=[];
-
- for(let i=0;i<raw.length;i+=CHUNK)
-  parts.push(raw.slice(i,i+CHUNK));
+ const parts=chunksOf(raw);
 
  const ttl=Math.max(
   60_000,
   w.expiresAt-Date.now()
  );
 
- /*
-  * Write the new immutable revision before publishing it.
-  */
  for(let i=0;i<parts.length;i++){
   await kv.set(
    worldChunkKey(code,w.revision,i),
@@ -276,11 +260,6 @@ async function careerCas(w:any,rev:number){
    {expireIn:ttl}
   );
 
- /*
-  * If this is an original V84 single-record world,
-  * migrate it without deleting it until the new metadata
-  * can be atomically published.
-  */
  if(legacy.value)
   tx.delete(worldKey(code));
 
@@ -294,7 +273,6 @@ const store:any={
   await kv.get(['health']);
  },
 
- /* Ordinary Multiplayer remains unchanged. */
  async load(code:string){
   return (
    await kv.get<any>(roomKey(code))
@@ -383,9 +361,6 @@ const store:any={
  careerSnapshotPut:snapshotPut,
  careerSnapshotGet:snapshotGet,
 
- /*
-  * Deno KV expiration replaces the old SQLite expiry sweep.
-  */
  async prune(_now:number){}
 };
 
@@ -406,12 +381,6 @@ function err(
  );
 }
 
-/*
- * Exactly-once create/join wrapper.
- *
- * This prevents a phone/network retry from accidentally creating
- * a second world or second player.
- */
 async function withEntryReceipt(
  request:Request,
  handler:(r:Request)=>Promise<Response>
@@ -578,10 +547,6 @@ async function withEntryReceipt(
  return result;
 }
 
-/*
- * Serialize requests inside this Deno isolate.
- * Cross-isolate conflicts remain protected by KV CAS.
- */
 let serial=Promise.resolve();
 
 function serialized<T>(

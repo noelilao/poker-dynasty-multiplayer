@@ -4,6 +4,7 @@
  */
 import { handle } from './rooms.mjs';
 import { handleCareer } from './career84.mjs';
+import { handlePresenceDeno } from './presence84m-deno.mjs';
 
 const CORS={
  'Access-Control-Allow-Origin':'*',
@@ -665,15 +666,17 @@ async function route(req:Request){
  );
 
  return serialized(
-  ()=>
-   p.startsWith('/api/career84/')
-    ? withEntryReceipt(
-       safe,
-       r=>handleCareer(r,store)
-      )
-    : handle(safe,store)
- );
-}
+  () =>
+    /^\/api\/career84\/presence\//.test(p)
+      ? handlePresenceDeno(safe, kv, careerLoad)
+      : p.startsWith('/api/career84/')
+        ? withEntryReceipt(
+            safe,
+            r => handleCareer(r, store)
+          )
+        : handle(safe, store)
+);
+
 
 Deno.serve(
  async req=>{

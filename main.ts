@@ -676,7 +676,7 @@ async function route(req:Request){
           )
         : handle(safe, store)
 );
-
+}
 
 Deno.serve(
  async req=>{
